@@ -33,12 +33,24 @@ const builder = function (yargs) {
       default: '.*',
       defaultDescription: 'Fetch all cards by default'
     })
+    .option('default-label', {
+      describe: 'Label given to JIRA issues created from unlabeled cards',
+    })
     .demand(2)
     .help('help')
     .wrap(null)
 }
 
-const transformToJiraFormat = function (parentEpic, epicField, storyPointField, card) {
+// label added to each generated jira issue
+const baseLabel = 'test-case'
+
+// add defaultLabel only if it is set and there are no other labels
+const applyDefaultLabel = function (cardLabels, defaultLabel) {
+  if (!defaultLabel) return cardLabels;
+  return cardLabels.length > 0 ? cardLabels : [defaultLabel]
+}
+
+const transformToJiraFormat = function (parentEpic, epicField, storyPointField, card, defaultLabel) {
 
   const issue = {
     fields: {
@@ -55,7 +67,7 @@ const transformToJiraFormat = function (parentEpic, epicField, storyPointField, 
           id: fv.id
         }
       }) : [],
-      labels: ['test-case'].concat(card.labels),
+      labels: [baseLabel].concat(applyDefaultLabel(card.labels, defaultLabel)),
       // epic link
       [epicField.id]: parentEpic.key
     }
@@ -74,7 +86,7 @@ const transformToJiraFormat = function (parentEpic, epicField, storyPointField, 
   return issue
 }
 
-const pushCardsToJira = function (cards, epic, jiraConfig) {
+const pushCardsToJira = function (cards, epic, jiraConfig, defaultLabel) {
 
   const config = Object.assign({
     protocol: 'https',
@@ -110,7 +122,7 @@ const pushCardsToJira = function (cards, epic, jiraConfig) {
 
       const newIssues = []
       cards.forEach(card => {
-        newIssues.push(jira.addNewIssue(transformToJiraFormat(parentEpic, epicField, storyPointsField, card)))
+        newIssues.push(jira.addNewIssue(transformToJiraFormat(parentEpic, epicField, storyPointsField, card, defaultLabel)))
       })
 
       return Promise.all(newIssues)
@@ -139,7 +151,11 @@ const handler = function(argv) {
       return trelloCards.get(configuration.trello, argv.boardRegexp, argv.listRegexp, argv.cardRegexp)
         .then(cards => {
           logger.debug(`${argv.dryRun ? 'Would' : 'Will'} create ${cards.length} issues in JIRA`)
-          return Promise.all([Promise.resolve(cards), argv.dryRun ? Promise.resolve([]) : pushCardsToJira(cards, argv.epic, configuration.jira) ])
+          // add default-label to cards before outputting to console (if dry-run is set)
+          if (argv.defaultLabel && argv.dryRun) {
+            cards.forEach(card => {card.labels = [baseLabel].concat(applyDefaultLabel(card.labels, argv.defaultLabel))})
+          }
+          return Promise.all([Promise.resolve(cards), argv.dryRun ? Promise.resolve([]) : pushCardsToJira(cards, argv.epic, configuration.jira, argv.defaultLabel) ])
         })
         .then(([cards, issues]) => {
           const createdIssueKeys = issues.map(issue => issue.key)
